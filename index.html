@@ -155,6 +155,15 @@ function getWeekStart(date) {
   return d.toISOString().slice(0,10);
 }
 function getTodayIndex() { const d = new Date().getDay(); return d === 0 ? 6 : d - 1; }
+function getAdjustedTargets(steps) {
+  const extra = Math.max(0, Math.floor((steps - 10000) / 1000));
+  return {
+    calories: TARGETS.calories + extra * 30,
+    protein: TARGETS.protein,
+    carbs: TARGETS.carbs + extra * 5,
+    fat: TARGETS.fat + extra * 1,
+  };
+}
 
 // ─── MACRO RING ───
 function MacroRing({ value, max, color, label, unit }) {
@@ -365,19 +374,22 @@ function TrackerView({ selectedDay, data, setData }) {
   const [customOpen, setCustomOpen] = useState(false);
   const [cn,setCn]=useState("");const[cc,setCc]=useState("");const[cp,setCp]=useState("");const[cca,setCca]=useState("");const[cf,setCf]=useState("");
   const wk=getWeekStart(new Date()); const dk=`${wk}-${selectedDay}`;
+  const daySteps = data.steps[dk]||0;
+  const adjT = getAdjustedTargets(daySteps);
   const meals = data.meals[dk]||[];
   const totals = meals.reduce((a,m)=>({calories:a.calories+m.cal,protein:a.protein+m.p,carbs:a.carbs+m.c,fat:a.fat+m.f}),{calories:0,protein:0,carbs:0,fat:0});
-  const rem = {calories:Math.max(0,TARGETS.calories-totals.calories),protein:Math.max(0,TARGETS.protein-totals.protein)};
+  const rem = {calories:Math.max(0,adjT.calories-totals.calories),protein:Math.max(0,adjT.protein-totals.protein)};
   const addM = (m) => setData(p=>({...p,meals:{...p.meals,[dk]:[...(p.meals[dk]||[]),{...m,id:Date.now()+Math.random()}]}}));
   const rmM = (id) => setData(p=>({...p,meals:{...p.meals,[dk]:(p.meals[dk]||[]).filter(m=>m.id!==id)}}));
   const addCustom = () => {if(!cn||!cc)return;addM({name:cn,cal:parseInt(cc)||0,p:parseInt(cp)||0,c:parseInt(cca)||0,f:parseInt(cf)||0});setCn("");setCc("");setCp("");setCca("");setCf("");setCustomOpen(false);};
   const accent="#f0a500"; const weekend=selectedDay>=4;
+  const isAdjusted = daySteps > 10000;
   const inp=(cl)=>({padding:"10px",borderRadius:"8px",border:`1px solid ${cl}30`,background:`${cl}08`,color:"#fff",fontSize:"13px",fontFamily:"inherit",boxSizing:"border-box",width:"100%"});
   return (
     <div>
       <div style={{...card("rgba(240,165,0,0.15)"),boxShadow:"0 8px 32px rgba(240,165,0,0.1)",padding:"20px"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"16px"}}><div><div style={sLabel()}>Daily Macros</div><div style={{fontSize:"18px",fontWeight:700,color:"#fff",marginTop:"2px"}}>{DAY_NAMES[selectedDay]}</div></div>{weekend&&<div style={{background:"rgba(240,165,0,0.15)",border:"1px solid rgba(240,165,0,0.3)",borderRadius:"6px",padding:"4px 8px",fontSize:"10px",color:accent,fontWeight:600,letterSpacing:"1px"}}>FLEX DAY</div>}</div>
-        <div style={{display:"flex",gap:"4px"}}><MacroRing value={totals.calories} max={TARGETS.calories} color={accent} label="Cal" unit=""/><MacroRing value={totals.protein} max={TARGETS.protein} color="#e94560" label="Protein" unit="g"/><MacroRing value={totals.carbs} max={TARGETS.carbs} color="#0fff95" label="Carbs" unit="g"/><MacroRing value={totals.fat} max={TARGETS.fat} color="#748cab" label="Fat" unit="g"/></div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"16px"}}><div><div style={sLabel()}>Daily Macros</div><div style={{fontSize:"18px",fontWeight:700,color:"#fff",marginTop:"2px"}}>{DAY_NAMES[selectedDay]}</div></div><div style={{display:"flex",gap:"6px"}}>{isAdjusted&&<div style={{background:"rgba(15,255,149,0.15)",border:"1px solid rgba(15,255,149,0.3)",borderRadius:"6px",padding:"4px 8px",fontSize:"10px",color:"#0fff95",fontWeight:600,letterSpacing:"1px"}}>+{adjT.calories-TARGETS.calories} CAL</div>}{weekend&&<div style={{background:"rgba(240,165,0,0.15)",border:"1px solid rgba(240,165,0,0.3)",borderRadius:"6px",padding:"4px 8px",fontSize:"10px",color:accent,fontWeight:600,letterSpacing:"1px"}}>FLEX DAY</div>}</div></div>
+        <div style={{display:"flex",gap:"4px"}}><MacroRing value={totals.calories} max={adjT.calories} color={accent} label="Cal" unit=""/><MacroRing value={totals.protein} max={adjT.protein} color="#e94560" label="Protein" unit="g"/><MacroRing value={totals.carbs} max={adjT.carbs} color="#0fff95" label="Carbs" unit="g"/><MacroRing value={totals.fat} max={adjT.fat} color="#748cab" label="Fat" unit="g"/></div>
         {rem.calories>0&&<div style={{textAlign:"center",marginTop:"14px",fontSize:"12px",color:"#748cab"}}>{rem.calories} cal remaining · {rem.protein}g protein to go</div>}
         {rem.calories===0&&totals.calories>0&&<div style={{textAlign:"center",marginTop:"14px",fontSize:"12px",color:accent}}>Daily target reached!</div>}
         {weekend&&<div style={{marginTop:"12px",padding:"10px",background:"rgba(240,165,0,0.08)",borderRadius:"8px",fontSize:"11px",color:"#748cab",lineHeight:1.5,textAlign:"center"}}>Weekend flex: eat lighter during the day to save room. Weekly budget ~13,500 cal.</div>}
@@ -516,10 +528,12 @@ function WeeklyView({ data }) {
     const woDone = isRest || data.days[dk] || (wo.exercises.length > 0 && wo.exercises.every((ex, ei) => Array.from({length: ex.sets}, (_, si) => data.sets[`${wk}-${i}-${ei}-${si}`]).every(Boolean)));
     const meals = data.meals[dk] || [];
     const cal = meals.reduce((a, m) => a + m.cal, 0);
-    const calHit = cal > 0 && Math.abs(cal - TARGETS.calories) / TARGETS.calories <= 0.05;
+    const pro = meals.reduce((a, m) => a + m.p, 0);
     const steps = data.steps[dk] || 0;
+    const adjT = getAdjustedTargets(steps);
+    const calHit = cal > 0 && cal <= adjT.calories && pro >= adjT.protein * 0.95;
     const acts = data.activities[dk] || [];
-    return { isRest, woDone, cal, calHit, steps, acts, name: wo.name };
+    return { isRest, woDone, cal, pro, calHit, steps, acts, name: wo.name };
   };
 
   const days = Array.from({length: 7}, (_, i) => ({...getDayData(i), idx: i}));
@@ -600,7 +614,10 @@ function MonthlyView({ data }) {
     const woDone = isRest || data.days[dk] || false;
     const meals = data.meals[dk] || [];
     const cal = meals.reduce((a, m) => a + m.cal, 0);
-    const calHit = cal > 0 && Math.abs(cal - TARGETS.calories) / TARGETS.calories <= 0.05;
+    const pro = meals.reduce((a, m) => a + m.p, 0);
+    const steps = data.steps[dk] || 0;
+    const adjT = getAdjustedTargets(steps);
+    const calHit = cal > 0 && cal <= adjT.calories && pro >= adjT.protein * 0.95;
     return { woDone, calHit, isRest };
   };
 
@@ -856,7 +873,10 @@ function WorkoutApp() {
       const woDone = isRest || data.days[dk] || false;
       const meals = data.meals[dk] || [];
       const cal = meals.reduce((a,m) => a + m.cal, 0);
-      const calHit = cal > 0 && Math.abs(cal - TARGETS.calories) / TARGETS.calories <= 0.05;
+      const pro = meals.reduce((a,m) => a + m.p, 0);
+      const steps = data.steps[dk] || 0;
+      const adjT = getAdjustedTargets(steps);
+      const calHit = cal > 0 && cal <= adjT.calories && pro >= adjT.protein * 0.95;
       totalDays++; if (woDone) woDays++; if (calHit) calDays++;
     }
     const woPct = totalDays > 0 ? Math.round((woDays/totalDays)*100) : 0;
@@ -928,8 +948,10 @@ function WorkoutApp() {
           const dk = `${wk}-${i}`; const wo = WORKOUT_PLAN[i]; const isRest = wo.type === "rest";
           const woDone = isRest || data.days[dk] || false;
           const meals = data.meals[dk] || []; const cal = meals.reduce((a,m) => a + m.cal, 0);
-          const calHit = cal > 0 && Math.abs(cal - TARGETS.calories) / TARGETS.calories <= 0.05;
+          const pro = meals.reduce((a,m) => a + m.p, 0);
           const steps = data.steps[dk] || 0;
+          const adjT = getAdjustedTargets(steps);
+          const calHit = cal > 0 && cal <= adjT.calories && pro >= adjT.protein * 0.95;
           return { isRest, woDone, cal, calHit, steps, name: wo.name };
         };
         const days = Array.from({length:7},(_,i)=>({...getDayData(i),idx:i}));
@@ -983,7 +1005,9 @@ function WorkoutApp() {
           const wo=WORKOUT_PLAN[dayIdx]; const isRest=wo.type==="rest";
           const woDone=isRest||data.days[dk]||false;
           const meals=data.meals[dk]||[]; const cal=meals.reduce((a,m)=>a+m.cal,0);
-          const calHit=cal>0&&Math.abs(cal-TARGETS.calories)/TARGETS.calories<=0.05;
+          const pro=meals.reduce((a,m)=>a+m.p,0);
+          const stps=data.steps[dk]||0;const adjT=getAdjustedTargets(stps);
+          const calHit=cal>0&&cal<=adjT.calories&&pro>=adjT.protein*0.95;
           totalDays++; if(woDone) woDays++; if(calHit) calDays++;
         }
         const woPct=totalDays>0?Math.round((woDays/totalDays)*100):0;
